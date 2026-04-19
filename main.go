@@ -5,6 +5,7 @@ import (
   "encoding/json"
   "log"
   "net/http"
+  "os"
   _ "modernc.org/sqlite"
 )
 
@@ -61,5 +62,8 @@ func main(){
     json.NewEncoder(w).Encode(map[string]string{"status":"cleared"})
   }))
 
-  log.Println("API running on http://localhost:8080"); log.Fatal(http.ListenAndServe(":8080",nil))
-}
+  port := os.Getenv("PORT")
+  if port == "" { port = "8080" }
+  log.Println("API running on port " + port)
+  log.Fatal(http.ListenAndServe(":"+port, nil))
+  }
