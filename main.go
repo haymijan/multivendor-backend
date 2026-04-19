@@ -1,69 +1,68 @@
 package main
 
 import (
-  "database/sql"
-  "encoding/json"
-  "log"
-  "net/http"
-  "os"
-  _ "modernc.org/sqlite"
+	"database/sql"
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+
+	_ "modernc.org/sqlite"
 )
 
-type Product struct { ID int `json:"id"`; Name string `json:"name"`; Price int `json:"price"`; Vendor string `json:"vendor"` }
-type CartItem struct { Product Product `json:"product"`; Qty int `json:"qty"` }
-
-var db *sql.DB
-
-func withCORS(h http.HandlerFunc) http.HandlerFunc {
-  return func(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-    if r.Method=="OPTIONS"{w.WriteHeader(200);return}
-    h(w,r)
-  }
+type Product struct {
+	ID int `json:"id"`
+	Name string `json:"name"`
+	Vendor string `json:"vendor"`
+	Price int `json:"price"`
+	ImageURL string `json:"image_url"`
 }
 
-func main(){
-  db,_ = sql.Open("sqlite","./shop.db")
-  db.Exec(`CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, price INTEGER, vendor TEXT)`)
-  db.Exec(`CREATE TABLE IF NOT EXISTS cart (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, qty INTEGER)`)
+func main() {
+	db, err := sql.Open("sqlite", "file:shop.db?cache=shared&mode=rwc")
+	if err!= nil { log.Fatal(err) }
 
-  var c int; db.QueryRow("SELECT COUNT(*) FROM products").Scan(&c)
-  if c==0 {
-    db.Exec("INSERT INTO products(name,price,vendor) VALUES('Wireless Headphone',2999,'TechStore BD')")
-    db.Exec("INSERT INTO products(name,price,vendor) VALUES('Panjabi Premium',1890,'Deshi Fashion')")
-    db.Exec("INSERT INTO products(name,price,vendor) VALUES('Arabian Dates 1kg',1200,'Qatar Mart')")
-  }
+	db.Exec(`CREATE TABLE IF NOT EXISTS products (
+		id INTEGER PRIMARY KEY, name TEXT, vendor TEXT, price INTEGER, image_url TEXT
+	)`)
 
-  http.HandleFunc("/products", withCORS(func(w http.ResponseWriter, r *http.Request){
-    if r.Method=="POST" {
-      var p Product; json.NewDecoder(r.Body).Decode(&p)
-      db.Exec("INSERT INTO products(name,price,vendor) VALUES(?,?,?)", p.Name, p.Price, p.Vendor)
-      w.WriteHeader(201); json.NewEncoder(w).Encode(map[string]string{"status":"created"}); return
-    }
-    rows,_ := db.Query("SELECT id,name,price,vendor FROM products"); defer rows.Close()
-    list:=[]Product{}; for rows.Next(){var p Product; rows.Scan(&p.ID,&p.Name,&p.Price,&p.Vendor); list=append(list,p)}
-    json.NewEncoder(w).Encode(list)
-  }))
+	// পুরনো ডাটা মুছে নতুন ছবিসহ ডাটা
+	db.Exec(`DELETE FROM products`)
+	db.Exec(`INSERT INTO products (name, vendor, price, image_url) VALUES
+		('Wireless Headphone','TechStore BD',2999,'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600'),
+		('Panjabi Premium','Deshi Fashion',1890,'https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=600'),
+		('Arabian Dates 1kg','Qatar Mart',1200,'https://images.unsplash.com/photo-1608198093002-ad4e005484ec?w=600')
+	`)
 
-  http.HandleFunc("/cart", withCORS(func(w http.ResponseWriter, r *http.Request){
-    rows,_ := db.Query(`SELECT p.id,p.name,p.price,p.vendor,c.qty FROM cart c JOIN products p ON p.id=c.product_id`); defer rows.Close()
-    list:=[]CartItem{}; for rows.Next(){var ci CartItem; rows.Scan(&ci.Product.ID,&ci.Product.Name,&ci.Product.Price,&ci.Product.Vendor,&ci.Qty); list=append(list,ci)}
-    json.NewEncoder(w).Encode(list)
-  }))
-  http.HandleFunc("/cart/add", withCORS(func(w http.ResponseWriter, r *http.Request){
-    var req struct{ID int `json:"id"`}; json.NewDecoder(r.Body).Decode(&req)
-    db.Exec("INSERT INTO cart(product_id,qty) VALUES(?,1)", req.ID)
-    json.NewEncoder(w).Encode(map[string]string{"status":"added"})
-  }))
-  http.HandleFunc("/cart/clear", withCORS(func(w http.ResponseWriter, r *http.Request){
-    db.Exec("DELETE FROM cart")
-    json.NewEncoder(w).Encode(map[string]string{"status":"cleared"})
-  }))
+	http.HandleFunc("/products", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		rows, _ := db.Query("SELECT id, name, vendor, price, image_url FROM products")
+		defer rows.Close()
+		var products []Product
+		for rows.Next() {
+			var p Product
+			rows.Scan(&p.ID, &p.Name, &p.Vendor, &p.Price, &p.ImageURL)
+			products = append(products, p)
+		}
+		json.NewEncoder(w).Encode(products)
+	})
 
-  port := os.Getenv("PORT")
-  if port == "" { port = "8080" }
-  log.Println("API running on port " + port)
-  log.Fatal(http.ListenAndServe(":"+port, nil))
-  }
+	http.HandleFunc("/cart/add", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" { return }
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	http.HandleFunc("/cart", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write([]byte(`[]`))
+	})
+
+	port := os.Getenv("PORT")
+	if port == "" { port = "8080" }
+	log.Println("API running on port " + port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
